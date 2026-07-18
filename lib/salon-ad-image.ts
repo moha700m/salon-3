@@ -1,9 +1,14 @@
 import path from 'node:path';
 import sharp from 'sharp';
 import type { SalonCampaignAIContent, SalonCampaignService } from '@/types/domain';
+import { CAIRO_400_B64, CAIRO_700_B64, CAIRO_900_B64 } from '@/lib/salon-ad-fonts';
 
 export const SALON_AD_WIDTH = 1080;
 export const SALON_AD_HEIGHT = 1350;
+
+// RTL content guides.
+const RIGHT = 992;
+const LEFT = 88;
 
 function escapeXml(value: string): string {
   return value
@@ -47,10 +52,6 @@ function tspans(lines: string[], x: number, startY: number, lineHeight: number):
   )).join('');
 }
 
-function serviceLabel(service: SalonCampaignService): string {
-  return service.price ? `${service.name} — ${service.price}` : service.name;
-}
-
 export interface SalonAdRenderInput {
   salonName: string;
   phone?: string | null;
@@ -60,83 +61,137 @@ export interface SalonAdRenderInput {
   content: SalonCampaignAIContent;
 }
 
+function fontStyle(): string {
+  return `<style>
+@font-face{font-family:'Cairo';font-style:normal;font-weight:400;src:url(data:font/ttf;base64,${CAIRO_400_B64}) format('truetype');}
+@font-face{font-family:'Cairo';font-style:normal;font-weight:700;src:url(data:font/ttf;base64,${CAIRO_700_B64}) format('truetype');}
+@font-face{font-family:'Cairo';font-style:normal;font-weight:900;src:url(data:font/ttf;base64,${CAIRO_900_B64}) format('truetype');}
+text{font-family:'Cairo',sans-serif;}
+</style>`;
+}
+
 export function buildSalonAdSvg(input: SalonAdRenderInput): string {
-  const salonName = truncate(input.salonName, 50);
-  const headline = truncate(input.content.marketing_headline, 78);
-  const headlineLines = wrapWords(headline, 26, 2);
-  const description = wrapWords(input.content.image_text.description, 42, 3);
-  const location = truncate(input.location || input.content.short_location || '', 58);
-  const workingHours = truncate(input.workingHours || input.content.short_working_hours || '', 68);
-  const phone = truncate(input.phone || '', 28);
+  const salonName = truncate(input.salonName, 32);
+  const headlineLines = wrapWords(truncate(input.content.marketing_headline, 64), 22, 2);
+  const description = wrapWords(input.content.image_text.description, 46, 2);
+  const location = truncate(input.location || input.content.short_location || '', 38);
+  const workingHours = truncate(input.workingHours || input.content.short_working_hours || '', 34);
+  const phone = truncate(input.phone || '', 22);
   const services = input.services.slice(0, 5);
+
+  // ---- Services list ----
+  const rowH = 72;
+  const panelTop = 548;
+  const titleY = 606;
+  const rowsTop = 648;
+  const panelH = 118 + Math.max(services.length, 1) * rowH;
+
   const serviceRows = services.map((service, index) => {
-    const y = 690 + index * 84;
+    const y = rowsTop + index * rowH;
+    const pricePill = service.price
+      ? `<rect x="${LEFT + 4}" y="${y}" width="152" height="50" rx="25" fill="#EBB24C"/>
+         <text x="${LEFT + 80}" y="${y + 34}" text-anchor="middle" fill="#141007" font-size="25" font-weight="900">${escapeXml(truncate(service.price, 12))}</text>`
+      : '';
+    const divider = index < services.length - 1
+      ? `<line x1="${LEFT + 4}" y1="${y + rowH - 8}" x2="${RIGHT}" y2="${y + rowH - 8}" stroke="#FFFFFF" stroke-opacity="0.08"/>`
+      : '';
     return `
       <g>
-        <rect x="80" y="${y}" width="920" height="66" rx="18" fill="#090b0e" fill-opacity="0.82" stroke="#D99A38" stroke-opacity="0.30"/>
-        <circle cx="950" cy="${y + 33}" r="17" fill="#D99A38" fill-opacity="0.18" stroke="#EAB45B"/>
-        <text x="950" y="${y + 40}" text-anchor="middle" fill="#F2C471" font-size="18" font-weight="700">${index + 1}</text>
-        <text x="910" y="${y + 43}" text-anchor="end" fill="#F8F6F1" font-size="27" font-weight="700">${escapeXml(serviceLabel(service))}</text>
+        <circle cx="${RIGHT}" cy="${y + 25}" r="6" fill="#EBB24C"/>
+        <text x="${RIGHT - 26}" y="${y + 35}" text-anchor="end" fill="#F6F2EA" font-size="31" font-weight="700">${escapeXml(service.name)}</text>
+        ${pricePill}
+        ${divider}
       </g>`;
   }).join('');
 
-  const details: string[] = [];
-  if (location) details.push(`<text x="940" y="1185" text-anchor="end" fill="#EFE8DB" font-size="25">${escapeXml(location)}</text>`);
-  if (workingHours) details.push(`<text x="940" y="1226" text-anchor="end" fill="#BDB8AF" font-size="22">${escapeXml(workingHours)}</text>`);
-  if (phone) details.push(`<text x="140" y="1228" text-anchor="start" direction="ltr" fill="#F2C471" font-size="28" font-weight="700">${escapeXml(phone)}</text>`);
+  // ---- Footer: meta + WhatsApp CTA ----
+  const ctaY = 1176;
+  const meta: string[] = [];
+  if (location) {
+    meta.push(`
+      <path d="M ${RIGHT} 1074 c -12 0 -22 10 -22 22 c 0 16 22 32 22 32 c 0 0 22 -16 22 -32 c 0 -12 -10 -22 -22 -22 z" fill="none" stroke="#EBB24C" stroke-width="2.5"/>
+      <circle cx="${RIGHT}" cy="1096" r="6.5" fill="#EBB24C"/>
+      <text x="${RIGHT - 38}" y="1106" text-anchor="end" fill="#EFE8DB" font-size="26" font-weight="700">${escapeXml(location)}</text>`);
+  }
+  if (workingHours) {
+    meta.push(`
+      <circle cx="${RIGHT}" cy="1148" r="19" fill="none" stroke="#EBB24C" stroke-width="2.5"/>
+      <path d="M ${RIGHT} 1137 v 12 h 10" fill="none" stroke="#EBB24C" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="${RIGHT - 38}" y="1157" text-anchor="end" fill="#CDC6BA" font-size="24" font-weight="500">${escapeXml(workingHours)}</text>`);
+  }
+
+  const cta = `
+    <g filter="url(#soft)">
+      <rect x="${LEFT}" y="${ctaY}" width="${RIGHT - LEFT}" height="92" rx="26" fill="url(#gold)"/>
+      <g transform="translate(288 ${ctaY + 46})">
+        <circle cx="0" cy="0" r="23" fill="#141007"/>
+        <path d="M -8 -9 c 2 -2 5 -2 6 0 l 3 5 c 1 2 1 3 -1 5 l -2 2 c 1 3 3 5 6 6 l 2 -2 c 2 -2 3 -2 5 -1 l 5 3 c 2 1 2 4 0 6 c -3 3 -7 3 -12 1 c -6 -3 -12 -9 -15 -15 c -2 -5 -2 -9 0 -12 z" fill="#EBB24C"/>
+      </g>
+      <text x="${(LEFT + RIGHT) / 2 + 30}" y="${ctaY + 58}" text-anchor="middle" fill="#141007" font-size="34" font-weight="900">احجز الآن عبر واتساب</text>
+    </g>`;
+
+  const phoneLine = phone
+    ? `<text x="${(LEFT + RIGHT) / 2}" y="1296" text-anchor="middle" direction="ltr" fill="#F0E9DC" font-size="26" font-weight="700">${escapeXml(phone)}</text>`
+    : '';
 
   return `
   <svg xmlns="http://www.w3.org/2000/svg" width="${SALON_AD_WIDTH}" height="${SALON_AD_HEIGHT}" viewBox="0 0 ${SALON_AD_WIDTH} ${SALON_AD_HEIGHT}">
     <defs>
-      <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#030506" stop-opacity="0.40"/>
-        <stop offset="0.48" stop-color="#030506" stop-opacity="0.82"/>
-        <stop offset="1" stop-color="#020304" stop-opacity="0.98"/>
+      ${fontStyle()}
+      <linearGradient id="veil" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#05060A" stop-opacity="0.58"/>
+        <stop offset="0.28" stop-color="#05060A" stop-opacity="0.28"/>
+        <stop offset="0.52" stop-color="#05060A" stop-opacity="0.72"/>
+        <stop offset="1" stop-color="#010204" stop-opacity="0.98"/>
       </linearGradient>
       <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0" stop-color="#B96F20"/>
-        <stop offset="0.5" stop-color="#F0BB5D"/>
-        <stop offset="1" stop-color="#C78028"/>
+        <stop offset="0" stop-color="#C6852B"/>
+        <stop offset="0.5" stop-color="#F6D488"/>
+        <stop offset="1" stop-color="#C6852B"/>
       </linearGradient>
-      <filter id="shadow"><feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000" flood-opacity="0.6"/></filter>
+      <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#0B0D12" stop-opacity="0.70"/>
+        <stop offset="1" stop-color="#0B0D12" stop-opacity="0.90"/>
+      </linearGradient>
+      <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="6" stdDeviation="14" flood-color="#000" flood-opacity="0.55"/>
+      </filter>
     </defs>
 
-    <rect width="1080" height="1350" fill="url(#shade)"/>
-    <rect x="50" y="48" width="980" height="1254" rx="42" fill="#050608" fill-opacity="0.30" stroke="#E5AB50" stroke-opacity="0.20"/>
+    <rect width="${SALON_AD_WIDTH}" height="${SALON_AD_HEIGHT}" fill="url(#veil)"/>
+    <rect x="40" y="40" width="1000" height="1270" rx="34" fill="none" stroke="url(#gold)" stroke-opacity="0.45" stroke-width="2"/>
 
-    <g font-family="Tahoma, Arial, sans-serif">
-      <text x="940" y="128" text-anchor="end" fill="#FFFFFF" font-size="48" font-weight="800">${escapeXml(salonName)}</text>
-      <text x="940" y="176" text-anchor="end" fill="#DEA34B" font-size="26" font-weight="700">للحلاقة الرجالية</text>
-      <rect x="80" y="215" width="920" height="2" fill="url(#gold)" opacity="0.70"/>
+    <!-- Header -->
+    <text x="${RIGHT}" y="130" text-anchor="end" fill="#EBB24C" font-size="25" font-weight="700" letter-spacing="4">صالون حلاقة رجالي</text>
+    <text x="${RIGHT}" y="198" text-anchor="end" fill="#FFFFFF" font-size="56" font-weight="900" filter="url(#soft)">${escapeXml(salonName)}</text>
+    <rect x="${RIGHT - 128}" y="220" width="128" height="5" rx="2.5" fill="url(#gold)"/>
 
-      <text x="940" text-anchor="end" fill="#F6F4EF" font-size="50" font-weight="900" filter="url(#shadow)">
-        ${tspans(headlineLines, 940, 300, 62)}
-      </text>
-      <text x="940" text-anchor="end" fill="#D1CCC3" font-size="29" font-weight="500">
-        ${tspans(description, 940, 435, 45)}
-      </text>
-
-      ${location ? `<rect x="655" y="565" width="345" height="54" rx="27" fill="#D99A38" fill-opacity="0.16" stroke="#E9B45D" stroke-opacity="0.55"/><text x="966" y="601" text-anchor="end" fill="#F3CA83" font-size="23" font-weight="700">${escapeXml(location)}</text>` : ''}
-
-      <text x="940" y="650" text-anchor="end" fill="#EAB45B" font-size="27" font-weight="800">الخدمات المتاحة</text>
-      <line x1="80" y1="655" x2="1000" y2="655" stroke="#FFFFFF" stroke-opacity="0.10"/>
-      ${serviceRows || `<text x="940" y="735" text-anchor="end" fill="#C8C3BA" font-size="26">تُضاف الخدمات بعد تأكيد بيانات الصالون</text>`}
-
-      <g transform="translate(80 1110)">
-        <rect x="0" y="0" width="220" height="62" rx="20" fill="url(#gold)"/>
-        <text x="110" y="40" text-anchor="middle" fill="#11100E" font-size="24" font-weight="900">احجز الآن</text>
-        <rect x="235" y="0" width="220" height="62" rx="20" fill="#0A0B0D" fill-opacity="0.88" stroke="#E5AB50" stroke-opacity="0.48"/>
-        <text x="345" y="40" text-anchor="middle" fill="#F4E3C2" font-size="23" font-weight="800">تواصل واتساب</text>
-        <rect x="470" y="0" width="190" height="62" rx="20" fill="#0A0B0D" fill-opacity="0.88" stroke="#FFFFFF" stroke-opacity="0.18"/>
-        <text x="565" y="40" text-anchor="middle" fill="#F4F1EA" font-size="23" font-weight="800">اتصل الآن</text>
-        <rect x="675" y="0" width="245" height="62" rx="20" fill="#0A0B0D" fill-opacity="0.88" stroke="#FFFFFF" stroke-opacity="0.18"/>
-        <text x="797" y="40" text-anchor="middle" fill="#F4F1EA" font-size="23" font-weight="800">الاتجاهات</text>
-      </g>
-
-      ${details.join('')}
-      <rect x="80" y="1260" width="920" height="1" fill="#FFFFFF" opacity="0.10"/>
-      <text x="540" y="1307" text-anchor="middle" fill="#E6AE56" font-size="25" font-weight="800">شاهد موقعك الجديد</text>
+    <!-- Scissors mark -->
+    <g transform="translate(126 150)" stroke="#EBB24C" stroke-width="3.5" fill="none">
+      <circle cx="-16" cy="18" r="12"/>
+      <circle cx="16" cy="18" r="12"/>
+      <line x1="-8" y1="10" x2="34" y2="-28"/>
+      <line x1="8" y1="10" x2="-34" y2="-28"/>
     </g>
+
+    <!-- Headline + description -->
+    <text x="${RIGHT}" text-anchor="end" fill="#F7F3EC" font-size="54" font-weight="900" filter="url(#soft)">
+      ${tspans(headlineLines, RIGHT, 330, 66)}
+    </text>
+    <text x="${RIGHT}" text-anchor="end" fill="#D6CFC3" font-size="29" font-weight="400">
+      ${tspans(description, RIGHT, headlineLines.length > 1 ? 452 : 410, 44)}
+    </text>
+
+    <!-- Services -->
+    <rect x="${LEFT - 24}" y="${panelTop}" width="${RIGHT - LEFT + 48}" height="${panelH}" rx="28" fill="url(#panel)" stroke="#EBB24C" stroke-opacity="0.28"/>
+    <text x="${RIGHT}" y="${titleY}" text-anchor="end" fill="#F6D488" font-size="30" font-weight="900">الخدمات والأسعار</text>
+    <rect x="${LEFT + 4}" y="${titleY + 16}" width="70" height="4" rx="2" fill="url(#gold)"/>
+    ${serviceRows || `<text x="${RIGHT}" y="${rowsTop + 30}" text-anchor="end" fill="#C8C3BA" font-size="26">تُضاف الخدمات بعد تأكيد بيانات الصالون</text>`}
+
+    <!-- Footer -->
+    ${meta.join('')}
+    ${cta}
+    ${phoneLine}
   </svg>`;
 }
 
@@ -144,8 +199,8 @@ export async function renderSalonAdPng(input: SalonAdRenderInput): Promise<Buffe
   const templatePath = path.join(process.cwd(), 'public', 'templates', 'salon-ad-template.jpg');
   const background = await sharp(templatePath)
     .resize(SALON_AD_WIDTH, SALON_AD_HEIGHT, { fit: 'cover', position: 'centre' })
-    .modulate({ brightness: 0.32, saturation: 0.68 })
-    .blur(0.6)
+    .modulate({ brightness: 0.52, saturation: 0.82 })
+    .blur(0.4)
     .png()
     .toBuffer();
 
